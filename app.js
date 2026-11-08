@@ -73,6 +73,7 @@ const SORTS = [['profit', 'Most profit'], ['dd', 'Least drawdown'], ['ratio', 'B
 const GROUP_NOTE = {
   'Top 10': 'The best test of ten different strategies: 100+ trades, positive in all years but at most one, ranked by net ÷ drawdown.',
   'Best for prop': 'Single strategies with 100+ trades and every year positive, folded by strategy. A prop account fails on drawdown, so the default order is net ÷ drawdown.',
+  'Portfolios': 'Strategies traded together in one account (Prop Core, the 380k portfolio), 100+ trades and positive, ranked by net ÷ drawdown. Open one for its Journal and Prop account.',
   'Latest tests': 'The 40 newest saved tests, folded by strategy.'
 };
 function sortKey(t) {
@@ -86,12 +87,12 @@ function showHome() {
   const byId = Object.fromEntries(INDEX.tests.map(t => [t.id, t]));
   const g = INDEX.groups.find(x => x.name === state.group) || INDEX.groups[0];
   const items = g.ids.map(id => byId[id]).filter(Boolean);
-  const icons = { 'Top 10': '★', 'Best for prop': '◆', 'Latest tests': '◷' };
+  const icons = { 'Top 10': '★', 'Best for prop': '◆', 'Portfolios': '▦', 'Latest tests': '◷' };
   const left = INDEX.groups.map(x => {
     const best = Math.max(...x.ids.map(id => byId[id]?.net ?? -1e18));
     return `<div class="g ${x.name === g.name ? 'on' : ''}" data-g="${esc(x.name)}"><span class="${x.name === 'Top 10' ? 'gold' : 'muted'}">${icons[x.name] || '•'}</span><div>${esc(x.name)}<small>best ${money0(best)}</small></div><span class="n">${x.ids.length}</span></div>`;
   }).join('');
-  const fams = {}; for (const t of items) (fams[t.family] = fams[t.family] || []).push(t);
+  const fams = {}; for (const t of items) { const k = g.name === 'Portfolios' ? t.label : t.family; (fams[k] = fams[k] || []).push(t); } // each portfolio its own row
   let list = Object.entries(fams).map(([name, tests]) => ({ name, tests: tests.sort(cmp) })).sort((a, b) => cmp(a.tests[0], b.tests[0]));
   const heads = ['Test', 'Saved', 'Trades', 'Net $', 'Win %', 'Max DD', 'Net ÷ DD', 'Years +'];
   const row = (t, indent, label) => `<tr class="click" data-id="${t.id}"><td style="padding-left:${indent}px">${esc(label)}</td><td class="muted">${esc(t.saved)}</td><td>${n0(t.trades)}</td><td class="${tone(t.net)}"><b>${money0(t.net)}</b></td><td>${t.win.toFixed(1)}</td><td class="muted">${money0(-t.maxDd)}</td><td class="${ratio(t) >= 10 ? 'pos' : ''}">${ratio(t).toFixed(1)}</td><td class="${t.yearsUp === t.years ? 'pos' : ''}">${t.yearsUp} / ${t.years}</td></tr>`;
