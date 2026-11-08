@@ -280,9 +280,9 @@ function propRun(A, ses, byDay, start, end, c) {
       const ok = q >= A.minDays && (fundedShare <= 0 || (cycle > 0 && cycleBest < fundedShare * cycle));
       if (ok) amount = Math.min(caps[Math.min(pays, caps.length - 1)], bal - (A.limit + 100));
     } else {
-      const net = pays < 3 ? A.limit + 100 : 100;
+      const net = A.limit + 100; // the minimum required balance for every request (fixed 2026-11-09)
       const ok = tradedDays >= A.minDays && q >= 5 && (fundedShare <= 0 || (bal > 0 && cycleBest <= fundedShare * bal)) && bal >= net;
-      if (ok) amount = Math.min(caps[Math.min(pays, caps.length - 1)], bal - (pays < 3 ? net - A.minPayout : net));
+      if (ok) amount = Math.min(caps[Math.min(pays, caps.length - 1)], bal - (pays < 3 ? net - A.minPayout : 100));
     }
     if (amount >= A.minPayout) {
       const free = Math.max(0, 25000 - accountPaid);
