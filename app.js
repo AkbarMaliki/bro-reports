@@ -214,21 +214,166 @@ function journalPlaybooks(el, v) {
     table('', ['Playbook', 'Trades', 'A week', 'Win rate', 'Avg R', 'Profit factor', 'Net PnL', 'Max drawdown'],
       v.journal.playbooks.map(p => [p.name, n0(p.trades), (p.week ?? 0).toFixed(1), (p.win ?? 0).toFixed(1) + '%', r3(p.avgR), (p.pf ?? 0).toFixed(2), money(p.net), money(p.maxDd)]), [4, 6]) + '</div>';
 }
+// ---------- Prop account simulator: the same rules and code as BroViewer (Bro.Backtest/PropAccount.cs Run); change both ----------
+const PROP = { account: 'Topstep 150k', evalTrail: '', fundedTrail: '', evalCons: '', fundedCons: '', consistency: false, keep: 4000, evalTimes: 5, fundedTimes: 8, dailyStop: 1000, discount: 0, months: 24, start: '' };
+const SESSIONS_A_MONTH = 21;
+function propRun(A, ses, byDay, start, end, c) {
+  const topstep = A.kind === 'Topstep';
+  const evalTrail = c.evalTrail || A.evalTrail, fundedTrail = c.fundedTrail || A.fundedTrail;
+  const evalShare = c.evalCons !== '' ? +c.evalCons : A.evalCons;
+  const fundedShare = c.fundedCons !== '' ? +c.fundedCons : (topstep && c.consistency ? 0.40 : A.fundedCons);
+  const evalFee = A.evalFee * (1 - c.discount), unit = c.micro ? 10 : 1;
+  const lockEval = topstep ? 0 : Infinity, lockFunded = topstep ? 0 : 100;
+  const caps = A.caps.map(x => x == null ? Infinity : x);
+  let paid = 0, got = 0, fee = evalFee, bal = 0, peak = 0, floor = -A.limit, best = 0, cycle = 0, cycleBest = 0, accountPaid = 0;
+  let failedC = 0, failedF = 0, passed = 0, n = 0, wins = 0, tradedDays = 0, q = 0, pays = 0, d = start, first = null;
+  let funded = false, after = false, full = false;
+  const ev = [[ses[start], 'Start', -evalFee, null]];
+  const reset = () => { bal = peak = 0; floor = -A.limit; };
+  const newEval = (day, k) => { fee += evalFee; ev.push([day, k, -evalFee, null]); funded = false; reset(); best = 0; n = 0; };
+  const raise = (high, lockAt) => { peak = Math.max(peak, high); floor = Math.min(Math.max(floor, peak - A.limit), lockAt); };
+  while (d < end) {
+    const open = bal; let dead = false;
+    const trail = funded ? fundedTrail : evalTrail, lockAt = funded ? lockFunded : lockEval;
+    const times = funded ? c.fundedTimes : c.evalTimes; let limit = funded ? c.fundedCap : c.evalCap, dll = 0;
+    if (!funded) { if (A.evalMinis > 0) limit = Math.min(limit, A.evalMinis * unit); dll = A.evalDll; }
+    else if (A.tiers) { let tier = A.tiers[0]; for (const x of A.tiers) if (bal >= x[0]) tier = x; limit = Math.min(limit, tier[1] * unit); dll = tier[2]; }
+    else if (A.fundedMinis > 0) limit = Math.min(limit, Math.max(1, (full ? A.fundedMinis : Math.floor(A.fundedMinis / 2)) * unit));
+    limit = Math.max(1, limit);
+    for (const t of byDay[d]) {
+      const k = Math.min(t[2] * times, limit) / t[2], p = t[0] * k, a = t[1] * k, f = t[3] * k;
+      if (trail === 'Intraday' && p <= 0) raise(bal + f, lockAt);
+      const low = bal - a;
+      if (dll > 0 && low <= open - dll && open - dll > floor) { bal = open - dll; break; }
+      if (low <= floor) { dead = true; break; }
+      if (trail === 'Intraday' && p > 0) raise(bal + f, lockAt);
+      if (bal + p <= floor) { dead = true; break; }
+      bal += p;
+      if (c.dailyStop > 0 && bal - open <= -c.dailyStop) break;
+    }
+    const day = bal - open, today = ses[d], traded = byDay[d].length > 0;
+    d++;
+    if (!funded) {
+      n++;
+      if (dead) { failedC++; newEval(today, 'CombineFailed'); continue; }
+      if (A.monthly && n % SESSIONS_A_MONTH === 0) { fee += evalFee; ev.push([today, 'MonthlyFee', -evalFee, null]); }
+      best = Math.max(best, day); raise(bal, lockAt);
+      if (bal >= (evalShare > 0 ? Math.max(A.target, best / evalShare) : A.target)) {
+        passed++; fee += A.activation; ev.push([today, 'CombinePassed', -A.activation, null]);
+        funded = true; after = false; full = false; reset(); wins = tradedDays = q = pays = 0; cycle = cycleBest = accountPaid = 0;
+      } else if (A.evalSessions > 0 && n >= A.evalSessions) { failedC++; newEval(today, 'EvalExpired'); }
+      continue;
+    }
+    if (dead) { failedF++; newEval(today, 'FundedFailed'); continue; }
+    cycle += day; cycleBest = Math.max(cycleBest, day);
+    if (day >= 150) wins++;
+    if (traded) tradedDays++;
+    if (day > 0 && day >= A.minDay) q++;
+    if (!after || !topstep) raise(bal, lockAt);
+    if (bal > A.limit + 100) full = true;
+    let amount = 0;
+    if (topstep) {
+      const ok = fundedShare > 0 ? tradedDays >= 3 && cycle > 0 && cycleBest <= fundedShare * cycle : wins >= 5 && (!after || cycle > 0);
+      if (ok && bal > 0) amount = Math.min(fundedShare > 0 ? A.consistencyCap : caps[0], Math.min(0.5 * bal, bal - c.keep));
+    } else if (A.kind === 'Apex') {
+      const ok = q >= A.minDays && (fundedShare <= 0 || (cycle > 0 && cycleBest < fundedShare * cycle));
+      if (ok) amount = Math.min(caps[Math.min(pays, caps.length - 1)], bal - (A.limit + 100));
+    } else {
+      const net = pays < 3 ? A.limit + 100 : 100;
+      const ok = tradedDays >= A.minDays && q >= 5 && (fundedShare <= 0 || (bal > 0 && cycleBest <= fundedShare * bal)) && bal >= net;
+      if (ok) amount = Math.min(caps[Math.min(pays, caps.length - 1)], bal - (pays < 3 ? net - A.minPayout : net));
+    }
+    if (amount >= A.minPayout) {
+      const free = Math.max(0, 25000 - accountPaid);
+      const mine = A.kind === 'ApexLegacy' ? Math.min(amount, free) + 0.9 * Math.max(0, amount - free) : amount * A.split;
+      bal -= amount; paid += amount; got += mine; accountPaid += amount; pays++;
+      ev.push([today, 'Payout', mine, bal]);
+      if (topstep) floor = 0;
+      after = true; wins = tradedDays = q = 0; cycle = cycleBest = 0;
+      if (first == null) first = d - start;
+      if (A.maxPayouts > 0 && pays >= A.maxPayouts) { ev.push([today, 'FundedClosed', 0, bal]); newEval(today, 'Start'); }
+    }
+  }
+  return { paid, fees: fee, cash: got - fee, combineFailed: failedC, fundedFailed: failedF, passed, first, events: ev, payouts: ev.filter(e => e[1] === 'Payout').length };
+}
+function propInput(v) {
+  if (v._prop) return v._prop;
+  const days = v.trades.map(t => t[16]); if (!days.length) return null;
+  const firstDay = days.reduce((a, b) => a < b ? a : b), lastDay = days.reduce((a, b) => a > b ? a : b);
+  const ses = [];
+  for (let d = new Date(firstDay + 'T12:00:00Z'); d <= new Date(lastDay + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) { const w = d.getUTCDay(); if (w !== 0 && w !== 6) ses.push(d.toISOString().slice(0, 10)); }
+  const at = new Map(ses.map((x, i) => [x, i])), byDay = ses.map(() => []);
+  for (const t of [...v.trades].sort((a, b) => a[0] - b[0])) { const i = at.get(t[16]); if (i != null) byDay[i].push([t[10], t[17] ?? 0, t[14], t[18] ?? 0]); }
+  return (v._prop = { ses, byDay });
+}
+function propSettings(v) { return { ...PROP, micro: v.micro, evalCap: v.micro ? 20 : 2, fundedCap: v.micro ? 10 : 1 }; }
 function journalProp(el, v) {
-  const p = v.prop; if (!p) { el.innerHTML = '<div class="card muted">This run has no trades.</div>'; return; }
-  const sp = p.spread ? `These settings, over ${p.spread.starts} start dates: ${money0(p.spread.mid)} a month in the middle, ${money0(p.spread.worst)} at worst, ${money0(p.spread.best)} at best. ` +
-    (p.spread.firstPayMonths != null ? `First payout after about ${p.spread.firstPayMonths} months. ` : 'No payout. ') + `${p.spread.failed} failed accounts in 24 months. The cards below are only the latest start date.` : '';
-  const byYear = {}; for (const e of p.events) { const [d, , cash] = e; const y = d.slice(0, 4), m = +d.slice(5, 7); (byYear[y] = byYear[y] || Array(13).fill(0))[m] += cash; }
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const kinds = { Start: 'Combine started', CombineFailed: 'Combine failed', CombinePassed: 'Combine passed', Payout: 'Payout', FundedFailed: 'Funded failed' };
-  el.innerHTML = `<div class="card"><div class="heading"><h2>Prop account</h2></div><div class="sub">This run's trades through a Topstep account: fees, target, loss limit, payouts. Rules read 2026-11-07.</div>
-      <div class="note">Settings (as the app's defaults): 150k · Standard payout path · keep $4,000 after a payout · evaluation 5 × (at most ${v.micro ? '20 micros' : '2 minis'}) · funded 8 × (at most ${v.micro ? '10 micros' : '1 mini'}) · own daily stop $1,000 · 24 months from ${prettyDay(p.start)}.</div></div>
+  const rules = (INDEX && INDEX.propRules) || [];
+  const inp = rules.length ? propInput(v) : null;
+  if (!inp) { el.innerHTML = '<div class="card muted">' + (rules.length ? 'This run has no trades.' : 'Prop rules are missing: publish again from BroViewer.') + '</div>'; return; }
+  const A = rules.find(r => r.key === PROP.account) || rules[2];
+  const topstep = A.kind === 'Topstep', word = topstep ? 'Combine' : 'Evaluation';
+  const c = propSettings(v);
+  const { ses, byDay } = inp, span = PROP.months * SESSIONS_A_MONTH;
+  const startDay = PROP.start || ses[Math.max(0, ses.length - span)];
+  let s = 0; while (s < ses.length - 1 && ses[s] < startDay) s++;
+  const e = Math.min(ses.length, s + span), r = propRun(A, ses, byDay, s, e, c), months = (e - s) / SESSIONS_A_MONTH;
+  const all = [];
+  for (let b = 0; b + span <= ses.length; b += 14) { const x = propRun(A, ses, byDay, b, b + span, c); all.push([x.cash / PROP.months, x.combineFailed + x.fundedFailed, x.first]); }
+  let sp = '';
+  if (all.length) {
+    const ms = all.map(x => x[0]).sort((a, b) => a - b), fp = all.filter(x => x[2] != null).map(x => x[2]).sort((a, b) => a - b);
+    sp = `These settings, over ${all.length} start dates: ${money0(ms[ms.length >> 1])} a month in the middle, ${money0(ms[0])} at worst, ${money0(ms[ms.length - 1])} at best. ` +
+      (fp.length ? `First payout after about ${(fp[fp.length >> 1] / SESSIONS_A_MONTH).toFixed(1)} months. ` : 'No payout. ') +
+      `${(all.reduce((t, x) => t + x[1], 0) / all.length).toFixed(1)} failed accounts in ${PROP.months} months. The cards below are only the start date you picked.`;
+  }
+  const trailName = t => t === 'Eod' ? 'EOD' : 'Intraday', pctName = x => x <= 0 ? 'None' : Math.round(x * 100) + ' %';
+  const firmFunded = topstep && PROP.consistency ? 0.40 : A.fundedCons;
+  const opt = (val, text, cur) => `<option value="${esc(val)}"${String(val) === String(cur) ? ' selected' : ''}>${esc(text)}</option>`;
+  const sel = (key, label, options, w) => `<label class="pf"><span>${label}</span><select data-k="${key}" style="min-width:${w}px">${options.join('')}</select></label>`;
+  const starts = [...new Set([ses[0], ...ses.filter((d, i) => i + span <= ses.length && d.slice(5, 7) === '01' && (i === 0 || ses[i - 1].slice(5, 7) === '12')), ses[Math.max(0, ses.length - span)]])].sort();
+  const shareOpts = (key, firm) => [opt('', `Firm rule (${pctName(firm)})`, PROP[key]), ...[[0, 'None'], [0.3, '30 %'], [0.4, '40 %'], [0.5, '50 %'], [0.55, '55 %']].map(([x, t]) => opt(String(x), t, PROP[key]))];
+  const trailOpts = (key, firm) => [opt('', `Firm rule (${trailName(firm)})`, PROP[key]), opt('Eod', 'EOD', PROP[key]), opt('Intraday', 'Intraday', PROP[key])];
+  const controls = [
+    sel('start', 'Start', starts.map(d => opt(d, prettyDay(d), startDay)), 120),
+    sel('months', 'Length', [6, 12, 24, 36].map(m => opt(m, m + ' months', PROP.months)), 100),
+    sel('account', 'Account', ['Topstep', 'Apex'].map(f => `<optgroup label="${f}">` + rules.filter(x => x.firm === f).map(x => opt(x.key, x.key, A.key)).join('') + '</optgroup>'), 170),
+    sel('evalTimes', 'Evaluation size', [1, 3, 5, 8, 10].map(x => opt(x, x + ' ×', PROP.evalTimes)), 80),
+    sel('fundedTimes', 'Funded size', [1, 2, 3, 5, 8].map(x => opt(x, x + ' ×', PROP.fundedTimes)), 80),
+    sel('evalTrail', 'Evaluation drawdown', trailOpts('evalTrail', A.evalTrail), 130),
+    sel('fundedTrail', 'Funded drawdown', trailOpts('fundedTrail', A.fundedTrail), 130),
+    sel('evalCons', 'Evaluation consistency', shareOpts('evalCons', A.evalCons), 130),
+    sel('fundedCons', 'Funded consistency', shareOpts('fundedCons', firmFunded), 130),
+    sel('discount', 'Price paid', [[0, 'List price'], [0.5, '50 % off'], [0.8, '80 % off'], [0.9, '90 % off']].map(([x, t]) => opt(x, t, PROP.discount)), 110),
+    ...(topstep ? [sel('consistency', 'Payout path', [opt('0', 'Standard', PROP.consistency ? 1 : 0), opt('1', 'Consistency', PROP.consistency ? 1 : 0)], 110),
+      sel('keep', 'Keep after payout', [2000, 4000].map(x => opt(x, money0(x), PROP.keep)), 100)] : []),
+    sel('dailyStop', 'Own daily stop', [[0, 'None'], [1000, '$1,000']].map(([x, t]) => opt(x, t, PROP.dailyStop)), 100)];
+  const byYear = {};
+  for (const x of r.events) { const y = x[0].slice(0, 4), m = +x[0].slice(5, 7); (byYear[y] = byYear[y] || Array(13).fill(0))[m] += x[2]; }
+  const monthsN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const kinds = { Start: word + ' started', CombineFailed: word + ' failed', CombinePassed: word + ' passed', Payout: 'Payout', FundedFailed: 'Funded failed', EvalExpired: word + ' expired (30 days)', FundedClosed: `Funded closed after ${A.maxPayouts} payouts` };
+  const firstPay = r.events.find(x => x[1] === 'Payout'), expired = r.events.filter(x => x[1] === 'EvalExpired').length;
+  const split = A.kind === 'ApexLegacy' ? '100 % of the first $25k, then 90 %' : topstep ? '90 %' : '100 %';
+  const rule = `${A.key}: target ${money0(A.target)}, loss limit ${money0(A.limit)} (${trailName(c.evalTrail || A.evalTrail)} in the ${word.toLowerCase()}, ${trailName(c.fundedTrail || A.fundedTrail)} funded)` +
+    (A.evalDll ? `, daily loss limit ${money0(A.evalDll)} in the evaluation` : '') + `, ${money0(A.evalFee * (1 - PROP.discount))} ${A.monthly ? 'a month' : 'once'}${A.evalSessions ? ' (30 days to pass)' : ''}, activation ${money0(A.activation)}` +
+    (A.maxPayouts ? `, at most ${A.maxPayouts} payouts` : '') + `. Sizes: evaluation ${PROP.evalTimes} × (at most ${v.micro ? '20 micros' : '2 minis'}), funded ${PROP.fundedTimes} × (at most ${v.micro ? '10 micros' : '1 mini'}), within the firm's contract limits.`;
+  el.innerHTML = `<div class="card"><div class="heading"><h2>Prop account</h2></div><div class="sub">This run's trades through a Topstep or Apex account: fees, target, loss limit (EOD or intraday), consistency, payouts. Rules read: Topstep 2026-11-07, Apex 2026-11-08. Change the settings to try another account.</div>
+      <div class="propctl">${controls.join('')}</div><div class="note">${esc(rule)}</div></div>
     ${sp ? `<div class="card">${esc(sp)}</div>` : ''}
-    <div class="grid g5">${kpi('Net cash', money0(p.cash), money0(p.cash / Math.max(1, p.months)) + ' a month', '#2dd4bf', '▣', tone(p.cash))}${kpi('Payouts', p.payouts, money0(p.paid) + ' gross, 90 % yours', '#8b5cf6', '◉')}
-      ${kpi('First payout', p.firstPay ? prettyDay(p.firstPay) : 'None', p.firstPayMonths != null ? `about ${p.firstPayMonths} months in` : 'in this range', '#38bdf8', '▦')}${kpi('Fees', money0(p.fees), 'Combine, resets, activation', '#fbbf24', '▤')}
-      ${kpi('Failed accounts', p.combineFailed + p.fundedFailed, `${p.combineFailed} Combine, ${p.fundedFailed} funded, ${p.passed} passed`, '#f87171', '↘', p.combineFailed + p.fundedFailed > 0 ? 'neg' : '')}</div>
-    <div class="card"><div class="heading"><h2>Cash by month</h2></div><div class="sub">Payouts at 90 %, less fees</div>${table('', ['Year', ...months, 'Total'], Object.entries(byYear).map(([y, a]) => [y, ...a.slice(1).map(x => x ? money0(x) : ''), money0(a.reduce((s, x) => s + x, 0))]), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])}</div>
-    <div class="card"><div class="heading"><h2>Account events</h2></div><div class="sub">Newest first</div>${table('', ['Date', 'Event', 'Cash', 'Balance left'], p.events.filter(e => e[1] !== 'MonthlyFee').reverse().map(e => [e[0], kinds[e[1]] || e[1], money0(e[2]), e[3] == null ? '' : money0(e[3])]), [2])}</div>`;
+    <div class="grid g5">${kpi('Net cash', money0(r.cash), money0(r.cash / Math.max(1, months)) + ' a month', '#2dd4bf', '▣', tone(r.cash))}${kpi('Payouts', r.payouts, money0(r.paid) + ' gross, ' + split + ' yours', '#8b5cf6', '◉')}
+      ${kpi('First payout', firstPay ? prettyDay(firstPay[0]) : 'None', r.first != null ? `about ${(r.first / SESSIONS_A_MONTH).toFixed(1)} months in` : 'in this range', '#38bdf8', '▦')}${kpi('Fees', money0(r.fees), word + 's, resets, activation', '#fbbf24', '▤')}
+      ${kpi('Failed accounts', r.combineFailed + r.fundedFailed, `${r.combineFailed} ${word}${expired ? ` (${expired} expired)` : ''}, ${r.fundedFailed} funded, ${r.passed} passed`, '#f87171', '↘', r.combineFailed + r.fundedFailed > 0 ? 'neg' : '')}</div>
+    <div class="card"><div class="heading"><h2>Cash by month</h2></div><div class="sub">Payouts after the split, less fees</div>${table('', ['Year', ...monthsN, 'Total'], Object.entries(byYear).map(([y, a]) => [y, ...a.slice(1).map(x => x ? money0(x) : ''), money0(a.reduce((t, x) => t + x, 0))]), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])}</div>
+    <div class="card"><div class="heading"><h2>Account events</h2></div><div class="sub">Newest first</div>${table('', ['Date', 'Event', 'Cash', 'Balance left'], r.events.filter(x => x[1] !== 'MonthlyFee').reverse().map(x => [x[0], kinds[x[1]] || x[1], money0(x[2]), x[3] == null ? '' : money0(x[3])]), [2])}</div>
+    <div class="note">Results change with the start date. Intraday trailing uses each trade's best open profit (a winner reaches its worst price first, a loser its best first). Not included: a call-up to Live, news limits, tax, Apex's inactivity rule, the Legacy 30 % open-loss and 5:1 rules. Apex sells with coupons: set Price paid.</div>`;
+  el.querySelectorAll('select[data-k]').forEach(x => x.addEventListener('change', () => {
+    const k = x.dataset.k, val = x.value;
+    if (['account', 'start', 'evalTrail', 'fundedTrail', 'evalCons', 'fundedCons'].includes(k)) PROP[k] = val;
+    else if (k === 'consistency') { PROP.consistency = val === '1'; PROP.fundedCons = ''; }
+    else PROP[k] = +val;
+    if (k === 'months') PROP.start = '';
+    journalProp(el, v);
+  }));
 }
 function runOverview(el, v) {
   const a = v.all, o = v.oos, cap = v.capital;

@@ -79,3 +79,6 @@ tr.click { cursor: pointer; } tr.click:hover td, tr.sel td { background: #1f2b40
 .chartbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .note { color: var(--label); font-size: 12.5px; margin: 6px 0 14px; max-width: 1100px; }
 .verdict { font-weight: 600; font-size: 14px; margin: 4px 0; }
+.propctl { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 14px; }
+.pf { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--label); }
+.pf select { font-size: 13px; padding: 6px 8px; }
