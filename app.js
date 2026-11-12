@@ -72,7 +72,7 @@ function go(path, q) { location.hash = path + (q ? '?' + new URLSearchParams(q).
 const SORTS = [['profit', 'Most profit'], ['dd', 'Least drawdown'], ['ratio', 'Best net ÷ drawdown'], ['win', 'Highest win %'], ['trades', 'Most trades'], ['newest', 'Newest'], ['years', 'Most positive years']];
 const GROUP_NOTE = {
   'Top 10': 'The best test of ten different strategies: 100+ trades, positive in all years but at most one, ranked by net ÷ drawdown.',
-  'Best for prop': 'Single strategies with 100+ trades and every year positive, folded by strategy. A prop account fails on drawdown, so the default order is net ÷ drawdown.',
+  'Best for prop': 'Single strategies with 100+ trades and every year positive, plus the research books that pay on a prop account (Prop Core, the high-win books), folded by strategy. A prop account fails on drawdown, so the default order is net ÷ drawdown.',
   'Portfolios': 'Strategies traded together in one account (Prop Core, the 380k portfolio), 100+ trades and positive, ranked by net ÷ drawdown. Open one for its Journal and Prop account.',
   'Latest tests': 'The 40 newest saved tests, folded by strategy.'
 };
