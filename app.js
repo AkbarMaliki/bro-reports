@@ -101,14 +101,14 @@ function showHome() {
     const best = Math.max(...x.ids.map(id => byId[id]?.net ?? -1e18));
     return `<div class="g ${x.name === g.name ? 'on' : ''}" data-g="${esc(x.name)}"><span class="${x.name === 'Top 20' ? 'gold' : 'muted'}">${icons[x.name] || '•'}</span><div>${esc(x.name)}<small>best ${money0(best)}</small></div><span class="n">${x.ids.length}</span></div>`;
   }).join('');
-  const fams = {}; for (const t of items) { const k = g.name === 'Portfolios' ? t.label : t.family; (fams[k] = fams[k] || []).push(t); } // each portfolio its own row
+  const fams = {}; for (const t of items) { const k = g.name === 'Portfolios' ? t.label : (t.variant || t.family);   // version variants fold together (11-18) (fams[k] = fams[k] || []).push(t); } // each portfolio its own row
   let list = Object.entries(fams).map(([name, tests]) => ({ name, tests: tests.sort(cmp) })).sort((a, b) => cmp(a.tests[0], b.tests[0]));
   const heads = ['Test', 'Saved', 'Trades', 'Net $', 'Win %', 'Max DD', 'Net ÷ DD', 'Years +', '50k PO', '100k PO', '150k PO', 'Total PO', 'PO / month', 'Payouts : Blown'];
   const poCells = t => [po(t, 0), po(t, 1), po(t, 2)].map(x => `<td class="${tone(x)}">${money0(x)}</td>`).join('') + `<td class="${tone(poTotal(t))}"><b>${money0(poTotal(t))}</b></td><td class="${tone(poMonth(t))}">${money0(poMonth(t))}</td><td class="${pays(t) > blown(t) ? 'pos' : ''}" title="50k ${cnt(t.pays, 0)} : ${cnt(t.blown, 0)}, 100k ${cnt(t.pays, 1)} : ${cnt(t.blown, 1)}, 150k ${cnt(t.pays, 2)} : ${cnt(t.blown, 2)}">${pays(t)} : ${blown(t)}</td>`;
   const row = (t, indent, label) => `<tr class="click" data-id="${t.id}"><td style="padding-left:${indent}px">${esc(label)}</td><td class="muted">${esc(t.saved)}</td><td>${n0(t.trades)}</td><td class="${tone(t.net)}"><b>${money0(t.net)}</b></td><td>${t.win.toFixed(1)}</td><td class="muted">${money0(-t.maxDd)}</td><td class="${ratio(t) >= 10 ? 'pos' : ''}">${ratio(t).toFixed(1)}</td><td class="${t.yearsUp === t.years ? 'pos' : ''}">${t.yearsUp} / ${t.years}</td>${poCells(t)}</tr>`;
   let body = '';
   for (const f of list) {
-    if (f.tests.length === 1 || g.name === 'Top 20' || g.name === 'Best payout') { for (const t of f.tests) body += row(t, 12, g.name === 'Top 20' || g.name === 'Best payout' || !t.label.toLowerCase().includes(f.name.toLowerCase()) ? `${f.name}  ·  ${t.label}` : t.label); continue; }
+    if (f.tests.length === 1 || g.name === 'Top 20') { for (const t of f.tests) body += row(t, 12, g.name === 'Top 20' || !t.label.toLowerCase().includes(f.name.toLowerCase()) ? `${f.name}  ·  ${t.label}` : t.label); continue; }
     const open = state.open.has(f.name), t = f.tests[0];
     body += `<tr class="fam" data-fam="${esc(f.name)}"><td>${open ? '▾' : '▸'}  ${esc(f.name)}  <span class="muted">(${f.tests.length} tests)</span></td><td></td><td>${n0(t.trades)}</td><td class="${tone(t.net)}">${money0(t.net)}</td><td>${t.win.toFixed(1)}</td><td class="muted">${money0(-t.maxDd)}</td><td>${ratio(t).toFixed(1)}</td><td>${t.yearsUp} / ${t.years}</td>${poCells(t)}</tr>`;
     if (open) for (const x of f.tests) body += row(x, 34, x.label);
