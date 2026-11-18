@@ -5,7 +5,7 @@ const $app = document.getElementById('app');
 const LW = window.LightweightCharts;
 let INDEX = null;
 const cacheTests = {};
-const state = { group: 'Top 20', sort: 'ratio', open: new Set() };
+const state = { group: 'Top 20', sort: 'ratio', open: new Set(), intraday: false };
 const charts = [];
 // the chart library may still paint once after a chart was removed on a tab change: harmless, kept out of the console
 window.addEventListener('error', e => { if (/Object is disposed/.test(e.message || '')) e.preventDefault(); });
@@ -69,7 +69,12 @@ function route() { clearCharts(); const { path, q } = params(); if (path.startsW
 function go(path, q) { location.hash = path + (q ? '?' + new URLSearchParams(q).toString() : ''); }
 
 // ---------- home: the History groups ----------
-const SORTS = [['profit', 'Most profit'], ['dd', 'Least drawdown'], ['ratio', 'Best net ÷ drawdown'], ['win', 'Highest win %'], ['trades', 'Most trades'], ['newest', 'Newest'], ['years', 'Most positive years']];
+const SORTS = [['profit', 'Most profit'], ['dd', 'Least drawdown'], ['ratio', 'Best net ÷ drawdown'], ['win', 'Highest win %'], ['trades', 'Most trades'], ['newest', 'Newest'], ['years', 'Most positive years'],
+  ['payout', 'Most payout (all 3 accounts)'], ['po50', 'Most payout 50k'], ['po100', 'Most payout 100k'], ['po150', 'Most payout 150k']];
+// payout columns (owner 11-18): t.po = Apex EOD 50k / 100k / 150k, then Intraday, net after fees, one account chain through the test
+const po = (t, k) => (t.po || [0, 0, 0, 0, 0, 0])[(state.intraday ? 3 : 0) + k];
+const poTotal = t => po(t, 0) + po(t, 1) + po(t, 2);
+const poYear = t => t.spanYears > 0 ? poTotal(t) / t.spanYears : 0;
 const GROUP_NOTE = {
   'Top 20': 'The best test of twenty different strategies and research books (Prop Core, the high-win books): 100+ trades over 3+ years, positive in all years but at most one, ranked by net ÷ drawdown.',
   'Best for prop': 'Single strategies with 100+ trades and every year positive, plus the research books that pay on a prop account (Prop Core, the high-win books), folded by strategy. A prop account fails on drawdown, so the default order is net ÷ drawdown.',
@@ -79,7 +84,8 @@ const GROUP_NOTE = {
 function sortKey(t) {
   switch (state.sort) {
     case 'profit': return t.net; case 'dd': return -t.maxDd; case 'ratio': return ratio(t); case 'win': return t.win; case 'trades': return t.trades;
-    case 'newest': return t.saved; case 'years': return t.yearsUp * 100 - t.years + ratio(t) / 1000; default: return t.net;
+    case 'newest': return t.saved; case 'years': return t.yearsUp * 100 - t.years + ratio(t) / 1000;
+    case 'payout': return poTotal(t); case 'po50': return po(t, 0); case 'po100': return po(t, 1); case 'po150': return po(t, 2); default: return t.net;
   }
 }
 const cmp = (a, b) => { const x = sortKey(a), y = sortKey(b); return x < y ? 1 : x > y ? -1 : 0; };
@@ -94,21 +100,24 @@ function showHome() {
   }).join('');
   const fams = {}; for (const t of items) { const k = g.name === 'Portfolios' ? t.label : t.family; (fams[k] = fams[k] || []).push(t); } // each portfolio its own row
   let list = Object.entries(fams).map(([name, tests]) => ({ name, tests: tests.sort(cmp) })).sort((a, b) => cmp(a.tests[0], b.tests[0]));
-  const heads = ['Test', 'Saved', 'Trades', 'Net $', 'Win %', 'Max DD', 'Net ÷ DD', 'Years +'];
-  const row = (t, indent, label) => `<tr class="click" data-id="${t.id}"><td style="padding-left:${indent}px">${esc(label)}</td><td class="muted">${esc(t.saved)}</td><td>${n0(t.trades)}</td><td class="${tone(t.net)}"><b>${money0(t.net)}</b></td><td>${t.win.toFixed(1)}</td><td class="muted">${money0(-t.maxDd)}</td><td class="${ratio(t) >= 10 ? 'pos' : ''}">${ratio(t).toFixed(1)}</td><td class="${t.yearsUp === t.years ? 'pos' : ''}">${t.yearsUp} / ${t.years}</td></tr>`;
+  const heads = ['Test', 'Saved', 'Trades', 'Net $', 'Win %', 'Max DD', 'Net ÷ DD', 'Years +', '50k PO', '100k PO', '150k PO', 'Total PO', 'PO / year'];
+  const poCells = t => [po(t, 0), po(t, 1), po(t, 2)].map(x => `<td class="${tone(x)}">${money0(x)}</td>`).join('') + `<td class="${tone(poTotal(t))}"><b>${money0(poTotal(t))}</b></td><td class="${tone(poYear(t))}">${money0(poYear(t))}</td>`;
+  const row = (t, indent, label) => `<tr class="click" data-id="${t.id}"><td style="padding-left:${indent}px">${esc(label)}</td><td class="muted">${esc(t.saved)}</td><td>${n0(t.trades)}</td><td class="${tone(t.net)}"><b>${money0(t.net)}</b></td><td>${t.win.toFixed(1)}</td><td class="muted">${money0(-t.maxDd)}</td><td class="${ratio(t) >= 10 ? 'pos' : ''}">${ratio(t).toFixed(1)}</td><td class="${t.yearsUp === t.years ? 'pos' : ''}">${t.yearsUp} / ${t.years}</td>${poCells(t)}</tr>`;
   let body = '';
   for (const f of list) {
     if (f.tests.length === 1 || g.name === 'Top 20') { for (const t of f.tests) body += row(t, 12, g.name === 'Top 20' || !t.label.toLowerCase().includes(f.name.toLowerCase()) ? `${f.name}  ·  ${t.label}` : t.label); continue; }
     const open = state.open.has(f.name), t = f.tests[0];
-    body += `<tr class="fam" data-fam="${esc(f.name)}"><td>${open ? '▾' : '▸'}  ${esc(f.name)}  <span class="muted">(${f.tests.length} tests)</span></td><td></td><td>${n0(t.trades)}</td><td class="${tone(t.net)}">${money0(t.net)}</td><td>${t.win.toFixed(1)}</td><td class="muted">${money0(-t.maxDd)}</td><td>${ratio(t).toFixed(1)}</td><td>${t.yearsUp} / ${t.years}</td></tr>`;
+    body += `<tr class="fam" data-fam="${esc(f.name)}"><td>${open ? '▾' : '▸'}  ${esc(f.name)}  <span class="muted">(${f.tests.length} tests)</span></td><td></td><td>${n0(t.trades)}</td><td class="${tone(t.net)}">${money0(t.net)}</td><td>${t.win.toFixed(1)}</td><td class="muted">${money0(-t.maxDd)}</td><td>${ratio(t).toFixed(1)}</td><td>${t.yearsUp} / ${t.years}</td>${poCells(t)}</tr>`;
     if (open) for (const x of f.tests) body += row(x, 34, x.label);
   }
   $app.innerHTML = `<div class="home"><div class="card groups"><div class="muted" style="font-size:11px;font-weight:700;margin:0 0 8px 4px">GROUPS</div>${left}</div>
-    <div class="card"><div class="row" style="align-items:center"><div class="grow"><h1>${esc(g.name)}</h1><div class="sub">${esc(GROUP_NOTE[g.name] || '')} ${items.length} tests in ${list.length} strategies. Sizes differ between tests, so net ÷ drawdown compares them fairly.</div></div>
-    <label class="muted">Sort by <select id="sort">${SORTS.map(([k, v]) => `<option value="${k}" ${k === state.sort ? 'selected' : ''}>${v}</option>`).join('')}</select></label></div>
+    <div class="card"><div class="row" style="align-items:center"><div class="grow"><h1>${esc(g.name)}</h1><div class="sub">${esc(GROUP_NOTE[g.name] || '')} ${items.length} tests in ${list.length} strategies. Sizes differ between tests, so net ÷ drawdown compares them fairly. PO: net payouts of one Apex ${state.intraday ? 'Intraday' : 'EOD'} account chain through every year of the test (a new evaluation after a failure or the 6th payout), the most allowed at every payout, evaluation 90 % off, every trade first at $150 of risk in whole micros (a wider stop is skipped), then 5 x in the evaluation and 8 x funded within Apex's contract limits; Total = 50k + 100k + 150k, PO / year = Total ÷ years of the test.</div></div>
+    <label class="muted">Sort by <select id="sort">${SORTS.map(([k, v]) => `<option value="${k}" ${k === state.sort ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label class="muted" style="margin-left:10px" title="Payout columns with Apex Intraday rules; off: Apex EOD"><input type="checkbox" id="intra" ${state.intraday ? 'checked' : ''}> Intraday</label></div>
     <div class="tbl" style="margin-top:14px"><table><thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div></div></div>`;
   $app.querySelectorAll('.g').forEach(el => el.onclick = () => { state.group = el.dataset.g; state.open.clear(); state.sort = state.group === 'Latest tests' ? 'newest' : 'ratio'; showHome(); });
   $app.querySelector('#sort').onchange = e => { state.sort = e.target.value; showHome(); };
+  $app.querySelector('#intra').onchange = e => { state.intraday = e.target.checked; showHome(); };
   $app.querySelectorAll('tr.fam').forEach(el => el.onclick = () => { const f = el.dataset.fam; state.open.has(f) ? state.open.delete(f) : state.open.add(f); showHome(); });
   $app.querySelectorAll('tr.click').forEach(el => el.onclick = () => go('/t/' + el.dataset.id));
 }
@@ -216,7 +225,9 @@ function journalPlaybooks(el, v) {
       v.journal.playbooks.map(p => [p.name, n0(p.trades), (p.week ?? 0).toFixed(1), (p.win ?? 0).toFixed(1) + '%', r3(p.avgR), (p.pf ?? 0).toFixed(2), money(p.net), money(p.maxDd)]), [4, 6]) + '</div>';
 }
 // ---------- Prop account simulator: the same rules and code as BroViewer (Bro.Backtest/PropAccount.cs Run); change both ----------
-const PROP = { account: 'Topstep 150k', evalTrail: '', fundedTrail: '', evalCons: '', fundedCons: '', consistency: false, keep: 4000, evalTimes: 5, fundedTimes: 8, dailyStop: 1000, discount: 0, months: 24, start: '' };
+// owner 2026-11-18: one fixed rule set, Apex 50k / 100k / 150k with an Intraday switch (C# PropAccount.ApexSettings: 90 % off, $150 a trade then 5 × / 8 ×, no own daily stop)
+const PROP = { size: '50k', intraday: false, months: 24, start: '' };
+const APEX = { evalTrail: '', fundedTrail: '', evalCons: '', fundedCons: '', consistency: false, keep: 0, evalTimes: 5, fundedTimes: 8, dailyStop: 0, discount: 0.9, baseRisk: 150 };
 const SESSIONS_A_MONTH = 21;
 function propRun(A, ses, byDay, start, end, c) {
   const topstep = A.kind === 'Topstep';
@@ -304,18 +315,26 @@ function propInput(v) {
   const ses = [];
   for (let d = new Date(firstDay + 'T12:00:00Z'); d <= new Date(lastDay + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) { const w = d.getUTCDay(); if (w !== 0 && w !== 6) ses.push(d.toISOString().slice(0, 10)); }
   const at = new Map(ses.map((x, i) => [x, i])), byDay = ses.map(() => []);
-  for (const t of [...v.trades].sort((a, b) => a[0] - b[0])) { const i = at.get(t[16]); if (i != null) byDay[i].push([t[10], t[17] ?? 0, t[14], t[18] ?? 0]); }
+  // one micro of each trade (pnl, worst open $, best open $, $ at the stop), resized per account in propSized
+  for (const t of [...v.trades].sort((a, b) => a[0] - b[0])) { const i = at.get(t[16]); if (i != null && t[20] > 0) byDay[i].push([t[17], t[18], t[19], t[20]]); }
   return (v._prop = { ses, byDay });
 }
-function propSettings(v) { return { ...PROP, micro: v.micro, evalCap: v.micro ? 20 : 2, fundedCap: v.micro ? 10 : 1 }; }
+// every trade at $150 of risk in whole micros, a trade whose one micro risks more skipped (C# PropAccount.AtRisk); 5 × / 8 × in propRun
+function propSized(inp, risk) {
+  inp.sized = inp.sized || {};
+  if (!inp.sized[risk]) inp.sized[risk] = inp.byDay.map(day => day.map(u => { const n = Math.floor(risk / u[3] + 1e-9); return n < 1 ? null : [u[0] * n, u[1] * n, n, u[2] * n]; }).filter(Boolean));
+  return inp.sized[risk];
+}
+function propSettings(v) { return { ...APEX, micro: v.unitMicro ?? v.micro, evalCap: 100000, fundedCap: 100000 }; }
 function journalProp(el, v) {
   const rules = (INDEX && INDEX.propRules) || [];
   const inp = rules.length ? propInput(v) : null;
   if (!inp) { el.innerHTML = '<div class="card muted">' + (rules.length ? 'This run has no trades.' : 'Prop rules are missing: publish again from BroViewer.') + '</div>'; return; }
-  const A = rules.find(r => r.key === PROP.account) || rules[2];
-  const topstep = A.kind === 'Topstep', word = topstep ? 'Combine' : 'Evaluation';
+  const key = `Apex ${PROP.intraday ? 'Intraday' : 'EOD'} ${PROP.size}`;
+  const A = rules.find(r => r.key === key) || rules[0];
+  const word = 'Evaluation';
   const c = propSettings(v);
-  const { ses, byDay } = inp, span = PROP.months * SESSIONS_A_MONTH;
+  const ses = inp.ses, byDay = propSized(inp, APEX.baseRisk), span = PROP.months * SESSIONS_A_MONTH;
   const startDay = PROP.start || ses[Math.max(0, ses.length - span)];
   let s = 0; while (s < ses.length - 1 && ses[s] < startDay) s++;
   const e = Math.min(ses.length, s + span), r = propRun(A, ses, byDay, s, e, c), months = (e - s) / SESSIONS_A_MONTH;
@@ -328,37 +347,25 @@ function journalProp(el, v) {
       (fp.length ? `First payout after about ${(fp[fp.length >> 1] / SESSIONS_A_MONTH).toFixed(1)} months. ` : 'No payout. ') +
       `${(all.reduce((t, x) => t + x[1], 0) / all.length).toFixed(1)} failed accounts in ${PROP.months} months. The cards below are only the start date you picked.`;
   }
-  const trailName = t => t === 'Eod' ? 'EOD' : 'Intraday', pctName = x => x <= 0 ? 'None' : Math.round(x * 100) + ' %';
-  const firmFunded = topstep && PROP.consistency ? 0.40 : A.fundedCons;
   const opt = (val, text, cur) => `<option value="${esc(val)}"${String(val) === String(cur) ? ' selected' : ''}>${esc(text)}</option>`;
   const sel = (key, label, options, w) => `<label class="pf"><span>${label}</span><select data-k="${key}" style="min-width:${w}px">${options.join('')}</select></label>`;
   const starts = [...new Set([ses[0], ...ses.filter((d, i) => i + span <= ses.length && d.slice(5, 7) === '01' && (i === 0 || ses[i - 1].slice(5, 7) === '12')), ses[Math.max(0, ses.length - span)]])].sort();
-  const shareOpts = (key, firm) => [opt('', `Firm rule (${pctName(firm)})`, PROP[key]), ...[[0, 'None'], [0.3, '30 %'], [0.4, '40 %'], [0.5, '50 %'], [0.55, '55 %']].map(([x, t]) => opt(String(x), t, PROP[key]))];
-  const trailOpts = (key, firm) => [opt('', `Firm rule (${trailName(firm)})`, PROP[key]), opt('Eod', 'EOD', PROP[key]), opt('Intraday', 'Intraday', PROP[key])];
   const controls = [
     sel('start', 'Start', starts.map(d => opt(d, prettyDay(d), startDay)), 120),
     sel('months', 'Length', [6, 12, 24, 36].map(m => opt(m, m + ' months', PROP.months)), 100),
-    sel('account', 'Account', ['Topstep', 'Apex'].map(f => `<optgroup label="${f}">` + rules.filter(x => x.firm === f).map(x => opt(x.key, x.key, A.key)).join('') + '</optgroup>'), 170),
-    sel('evalTimes', 'Evaluation size', [1, 3, 5, 8, 10].map(x => opt(x, x + ' ×', PROP.evalTimes)), 80),
-    sel('fundedTimes', 'Funded size', [1, 2, 3, 5, 8].map(x => opt(x, x + ' ×', PROP.fundedTimes)), 80),
-    sel('evalTrail', 'Evaluation drawdown', trailOpts('evalTrail', A.evalTrail), 130),
-    sel('fundedTrail', 'Funded drawdown', trailOpts('fundedTrail', A.fundedTrail), 130),
-    sel('evalCons', 'Evaluation consistency', shareOpts('evalCons', A.evalCons), 130),
-    sel('fundedCons', 'Funded consistency', shareOpts('fundedCons', firmFunded), 130),
-    sel('discount', 'Price paid', [[0, 'List price'], [0.5, '50 % off'], [0.8, '80 % off'], [0.9, '90 % off']].map(([x, t]) => opt(x, t, PROP.discount)), 110),
-    ...(topstep ? [sel('consistency', 'Payout path', [opt('0', 'Standard', PROP.consistency ? 1 : 0), opt('1', 'Consistency', PROP.consistency ? 1 : 0)], 110),
-      sel('keep', 'Keep after payout', [2000, 4000].map(x => opt(x, money0(x), PROP.keep)), 100)] : []),
-    sel('dailyStop', 'Own daily stop', [[0, 'None'], [1000, '$1,000']].map(([x, t]) => opt(x, t, PROP.dailyStop)), 100)];
+    sel('size', 'Account', ['50k', '100k', '150k'].map(x => opt(x, 'Apex ' + x, PROP.size)), 110),
+    sel('intraday', 'Intraday', [opt('0', 'Off (EOD)', PROP.intraday ? 1 : 0), opt('1', 'On', PROP.intraday ? 1 : 0)], 100)];
   const byYear = {};
   for (const x of r.events) { const y = x[0].slice(0, 4), m = +x[0].slice(5, 7); (byYear[y] = byYear[y] || Array(13).fill(0))[m] += x[2]; }
   const monthsN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const kinds = { Start: word + ' started', CombineFailed: word + ' failed', CombinePassed: word + ' passed', Payout: 'Payout', FundedFailed: 'Funded failed', EvalExpired: word + ' expired (30 days)', FundedClosed: `Funded closed after ${A.maxPayouts} payouts` };
   const firstPay = r.events.find(x => x[1] === 'Payout'), expired = r.events.filter(x => x[1] === 'EvalExpired').length;
-  const split = A.kind === 'ApexLegacy' ? '100 % of the first $25k, then 90 %' : topstep ? '90 %' : '100 %';
-  const rule = `${A.key}: target ${money0(A.target)}, loss limit ${money0(A.limit)} (${trailName(c.evalTrail || A.evalTrail)} in the ${word.toLowerCase()}, ${trailName(c.fundedTrail || A.fundedTrail)} funded)` +
-    (A.evalDll ? `, daily loss limit ${money0(A.evalDll)} in the evaluation` : '') + `, ${money0(A.evalFee * (1 - PROP.discount))} ${A.monthly ? 'a month' : 'once'}${A.evalSessions ? ' (30 days to pass)' : ''}, activation ${money0(A.activation)}` +
-    (A.maxPayouts ? `, at most ${A.maxPayouts} payouts` : '') + `. Sizes: evaluation ${PROP.evalTimes} × (at most ${v.micro ? '20 micros' : '2 minis'}), funded ${PROP.fundedTimes} × (at most ${v.micro ? '10 micros' : '1 mini'}), within the firm's contract limits.`;
-  el.innerHTML = `<div class="card"><div class="heading"><h2>Prop account</h2></div><div class="sub">This run's trades through a Topstep or Apex account: fees, target, loss limit (EOD or intraday), consistency, payouts. Rules read: Topstep 2026-11-07, Apex 2026-11-08. Change the settings to try another account.</div>
+  const split = '100 %';
+  const rule = `${A.key}: target ${money0(A.target)}, loss limit ${money0(A.limit)} trailing ${PROP.intraday ? 'every new high, open profit included' : 'the closing balance once a day'} until start + $100 in the PA` +
+    (A.evalDll ? `, daily loss limit ${money0(A.evalDll)} in the evaluation` : '') + `, 30 days to pass, ${money0(A.evalFee * (1 - APEX.discount))} after the coupon, activation ${money0(A.activation)}. ` +
+    `Payout: 5 days of ${money0(A.minDay)}+, 50 % consistency, balance above the safety net ${money0(A.limit + 100)} plus the $500 minimum, the most allowed each time (caps ${A.caps.map(x => money0(x)).join(' / ')}), 6 payouts then a new evaluation. ` +
+    `Size: every trade first at $150 of risk in whole micros (a wider stop is skipped), then 5 x in the evaluation and 8 x funded within Apex's contract limits.`;
+  el.innerHTML = `<div class="card"><div class="heading"><h2>Prop account</h2></div><div class="sub">This run's trades through an Apex account with the firm's rules (read 2026-11-18): fees, target, loss limit (EOD, or Intraday when switched on), 50 % consistency, the most allowed at every payout.</div>
       <div class="propctl">${controls.join('')}</div><div class="note">${esc(rule)}</div></div>
     ${sp ? `<div class="card">${esc(sp)}</div>` : ''}
     <div class="grid g5">${kpi('Net cash', money0(r.cash), money0(r.cash / Math.max(1, months)) + ' a month', '#2dd4bf', '▣', tone(r.cash))}${kpi('Payouts', r.payouts, money0(r.paid) + ' gross, ' + split + ' yours', '#8b5cf6', '◉')}
@@ -366,11 +373,11 @@ function journalProp(el, v) {
       ${kpi('Failed accounts', r.combineFailed + r.fundedFailed, `${r.combineFailed} ${word}${expired ? ` (${expired} expired)` : ''}, ${r.fundedFailed} funded, ${r.passed} passed`, '#f87171', '↘', r.combineFailed + r.fundedFailed > 0 ? 'neg' : '')}</div>
     <div class="card"><div class="heading"><h2>Cash by month</h2></div><div class="sub">Payouts after the split, less fees</div>${table('', ['Year', ...monthsN, 'Total'], Object.entries(byYear).map(([y, a]) => [y, ...a.slice(1).map(x => x ? money0(x) : ''), money0(a.reduce((t, x) => t + x, 0))]), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])}</div>
     <div class="card"><div class="heading"><h2>Account events</h2></div><div class="sub">Newest first</div>${table('', ['Date', 'Event', 'Cash', 'Balance left'], r.events.filter(x => x[1] !== 'MonthlyFee').reverse().map(x => [x[0], kinds[x[1]] || x[1], money0(x[2]), x[3] == null ? '' : money0(x[3])]), [2])}</div>
-    <div class="note">Results change with the start date. Intraday trailing uses each trade's best open profit (a winner reaches its worst price first, a loser its best first). Not included: a call-up to Live, news limits, tax, Apex's inactivity rule, the Legacy 30 % open-loss and 5:1 rules. Apex sells with coupons: set Price paid.</div>`;
+    <div class="note">Results change with the start date. Intraday trailing uses each trade's best open profit (a winner reaches its worst price first, a loser its best first). Not included: news limits, tax, Apex's inactivity rule. The evaluation price is the list price less Apex's usual 90 % coupon.</div>`;
   el.querySelectorAll('select[data-k]').forEach(x => x.addEventListener('change', () => {
     const k = x.dataset.k, val = x.value;
-    if (['account', 'start', 'evalTrail', 'fundedTrail', 'evalCons', 'fundedCons'].includes(k)) PROP[k] = val;
-    else if (k === 'consistency') { PROP.consistency = val === '1'; PROP.fundedCons = ''; }
+    if (k === 'start' || k === 'size') PROP[k] = val;
+    else if (k === 'intraday') PROP.intraday = val === '1';
     else PROP[k] = +val;
     if (k === 'months') PROP.start = '';
     journalProp(el, v);
