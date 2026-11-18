@@ -79,7 +79,8 @@ const cnt = (a, k) => (a || [0, 0, 0, 0, 0, 0])[(state.intraday ? 3 : 0) + k];
 const pays = t => cnt(t.pays, 0) + cnt(t.pays, 1) + cnt(t.pays, 2), blown = t => cnt(t.blown, 0) + cnt(t.blown, 1) + cnt(t.blown, 2);
 const GROUP_NOTE = {
   'Top 20': 'The best test of twenty different strategies and research books (Prop Core, the high-win books): 100+ trades over 3+ years, positive in all years but at most one, ranked by net ÷ drawdown.',
-  'Best for prop': 'Single strategies with 100+ trades and every year positive, plus the research books that pay on a prop account (Prop Core, the high-win books), folded by strategy. A prop account fails on drawdown, so the default order is net ÷ drawdown.',
+  'Best payout': 'The tests that pay most on Apex 50k + 100k + 150k (the PO columns): 100+ trades over 3+ years, positive net and a positive Total PO, the same test saved twice shown once, the best 30 by Total PO. Books mined on the same years (FX4) are here too: their forward test (fr4) is still open. Chosen by EOD payouts.',
+  'Best for prop': 'Single strategies with 100+ trades and every year positive, plus the research books that pay on a prop account (Prop Core, the high-win books, any book with a positive Total PO), folded by strategy. A prop account fails on drawdown, so the default order is net ÷ drawdown.',
   'Portfolios': 'Strategies traded together in one account (Prop Core, the 380k portfolio), 100+ trades and positive, ranked by net ÷ drawdown. Open one for its Journal and Prop account.',
   'Latest tests': 'The 40 newest saved tests, folded by strategy.'
 };
@@ -95,7 +96,7 @@ function showHome() {
   const byId = Object.fromEntries(INDEX.tests.map(t => [t.id, t]));
   const g = INDEX.groups.find(x => x.name === state.group) || INDEX.groups[0];
   const items = g.ids.map(id => byId[id]).filter(Boolean);
-  const icons = { 'Top 20': '★', 'Best for prop': '◆', 'Portfolios': '▦', 'Latest tests': '◷' };
+  const icons = { 'Top 20': '★', 'Best payout': '$', 'Best for prop': '◆', 'Portfolios': '▦', 'Latest tests': '◷' };
   const left = INDEX.groups.map(x => {
     const best = Math.max(...x.ids.map(id => byId[id]?.net ?? -1e18));
     return `<div class="g ${x.name === g.name ? 'on' : ''}" data-g="${esc(x.name)}"><span class="${x.name === 'Top 20' ? 'gold' : 'muted'}">${icons[x.name] || '•'}</span><div>${esc(x.name)}<small>best ${money0(best)}</small></div><span class="n">${x.ids.length}</span></div>`;
@@ -107,7 +108,7 @@ function showHome() {
   const row = (t, indent, label) => `<tr class="click" data-id="${t.id}"><td style="padding-left:${indent}px">${esc(label)}</td><td class="muted">${esc(t.saved)}</td><td>${n0(t.trades)}</td><td class="${tone(t.net)}"><b>${money0(t.net)}</b></td><td>${t.win.toFixed(1)}</td><td class="muted">${money0(-t.maxDd)}</td><td class="${ratio(t) >= 10 ? 'pos' : ''}">${ratio(t).toFixed(1)}</td><td class="${t.yearsUp === t.years ? 'pos' : ''}">${t.yearsUp} / ${t.years}</td>${poCells(t)}</tr>`;
   let body = '';
   for (const f of list) {
-    if (f.tests.length === 1 || g.name === 'Top 20') { for (const t of f.tests) body += row(t, 12, g.name === 'Top 20' || !t.label.toLowerCase().includes(f.name.toLowerCase()) ? `${f.name}  ·  ${t.label}` : t.label); continue; }
+    if (f.tests.length === 1 || g.name === 'Top 20' || g.name === 'Best payout') { for (const t of f.tests) body += row(t, 12, g.name === 'Top 20' || g.name === 'Best payout' || !t.label.toLowerCase().includes(f.name.toLowerCase()) ? `${f.name}  ·  ${t.label}` : t.label); continue; }
     const open = state.open.has(f.name), t = f.tests[0];
     body += `<tr class="fam" data-fam="${esc(f.name)}"><td>${open ? '▾' : '▸'}  ${esc(f.name)}  <span class="muted">(${f.tests.length} tests)</span></td><td></td><td>${n0(t.trades)}</td><td class="${tone(t.net)}">${money0(t.net)}</td><td>${t.win.toFixed(1)}</td><td class="muted">${money0(-t.maxDd)}</td><td>${ratio(t).toFixed(1)}</td><td>${t.yearsUp} / ${t.years}</td>${poCells(t)}</tr>`;
     if (open) for (const x of f.tests) body += row(x, 34, x.label);
@@ -117,7 +118,7 @@ function showHome() {
     <label class="muted">Sort by <select id="sort">${SORTS.map(([k, v]) => `<option value="${k}" ${k === state.sort ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
     <label class="muted" style="margin-left:10px" title="Payout columns with Apex Intraday rules; off: Apex EOD"><input type="checkbox" id="intra" ${state.intraday ? 'checked' : ''}> Intraday</label></div>
     <div class="tbl" style="margin-top:14px"><table><thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div></div></div>`;
-  $app.querySelectorAll('.g').forEach(el => el.onclick = () => { state.group = el.dataset.g; state.open.clear(); state.sort = state.group === 'Latest tests' ? 'newest' : 'ratio'; showHome(); });
+  $app.querySelectorAll('.g').forEach(el => el.onclick = () => { state.group = el.dataset.g; state.open.clear(); state.sort = state.group === 'Latest tests' ? 'newest' : state.group === 'Best payout' ? 'payout' : 'ratio'; showHome(); });
   $app.querySelector('#sort').onchange = e => { state.sort = e.target.value; showHome(); };
   $app.querySelector('#intra').onchange = e => { state.intraday = e.target.checked; showHome(); };
   $app.querySelectorAll('tr.fam').forEach(el => el.onclick = () => { const f = el.dataset.fam; state.open.has(f) ? state.open.delete(f) : state.open.add(f); showHome(); });
