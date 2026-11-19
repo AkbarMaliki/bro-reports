@@ -70,7 +70,7 @@ function go(path, q) { location.hash = path + (q ? '?' + new URLSearchParams(q).
 
 // ---------- home: the History groups ----------
 const SORTS = [['profit', 'Most profit'], ['dd', 'Least drawdown'], ['ratio', 'Best net ÷ drawdown'], ['win', 'Highest win %'], ['trades', 'Most trades'], ['newest', 'Newest'], ['years', 'Most positive years'],
-  ['payout', 'Most payout (all 3 accounts)'], ['po50', 'Most payout 50k'], ['po100', 'Most payout 100k'], ['po150', 'Most payout 150k'], ['pobr', 'Most payouts per blown account']];
+  ['payout', 'Most payout (all 3 accounts)'], ['po50', 'Most payout 50k'], ['po100', 'Most payout 100k'], ['po150', 'Most payout 150k'], ['pobr', 'Most payouts per failed account'], ['focus', 'Focus pick (payouts per account lost)']];
 // payout columns (owner 11-18): t.po = Apex EOD 50k / 100k / 150k, then Intraday, net after fees, one account chain through the test
 const po = (t, k) => (t.po || [0, 0, 0, 0, 0, 0])[(state.intraday ? 3 : 0) + k];
 const poTotal = t => po(t, 0) + po(t, 1) + po(t, 2);
@@ -78,8 +78,8 @@ const poMonth = t => t.spanYears > 0 ? poTotal(t) / (t.spanYears * 12) : 0;
 const cnt = (a, k) => (a || [0, 0, 0, 0, 0, 0])[(state.intraday ? 3 : 0) + k];
 const pays = t => cnt(t.pays, 0) + cnt(t.pays, 1) + cnt(t.pays, 2), blown = t => cnt(t.blown, 0) + cnt(t.blown, 1) + cnt(t.blown, 2);
 const GROUP_NOTE = {
-  'Top 20': 'The best test of twenty different strategies and research books (Prop Core, the high-win books): 100+ trades over 3+ years, positive in all years but at most one, ranked by net ÷ drawdown.',
-  'Best payout': 'The tests that pay most on Apex 50k + 100k + 150k (the PO columns): 100+ trades over 3+ years, positive net and a positive Total PO, the same test saved twice shown once, the best 30 by Total PO. Books mined on the same years (FX4) are here too: their forward test (fr4) is still open. Chosen by EOD payouts.',
+  'Top 20': 'First the focus picks (Best payout, one per strategy), then the best test of other strategies and research books: 100+ trades over 3+ years, positive in all years but at most one, ranked by net ÷ drawdown, twenty in all.',
+  'Best payout': 'Focus picks for Apex EOD (Intraday when the box is ticked): every saved test through a 36-month account sweep (a start every 14 sessions), per account size the tests with the most payouts per account lost (10+ payouts, positive $ a month), one per strategy. Tests that add several accounts or books into one stream are left out. Chosen after the results: a short list to look at, not proof. Books mined on 2024-26 (FX4) are here too: their forward test (fr4) is still open.',
   'Best for prop': 'Single strategies with 100+ trades and every year positive, plus the research books that pay on a prop account (Prop Core, the high-win books, any book with a positive Total PO), folded by strategy. A prop account fails on drawdown, so the default order is net ÷ drawdown.',
   'Portfolios': 'Strategies traded together in one account (Prop Core, the 380k portfolio), 100+ trades and positive, ranked by net ÷ drawdown. Open one for its Journal and Prop account.',
   'Latest tests': 'The 40 newest saved tests, folded by strategy.'
@@ -88,22 +88,26 @@ function sortKey(t) {
   switch (state.sort) {
     case 'profit': return t.net; case 'dd': return -t.maxDd; case 'ratio': return ratio(t); case 'win': return t.win; case 'trades': return t.trades;
     case 'newest': return t.saved; case 'years': return t.yearsUp * 100 - t.years + ratio(t) / 1000;
-    case 'payout': return poTotal(t); case 'po50': return po(t, 0); case 'po100': return po(t, 1); case 'po150': return po(t, 2); case 'pobr': return pays(t) / Math.max(1, blown(t)) + pays(t) / 1e6; default: return t.net;
+    case 'payout': return poTotal(t); case 'po50': return po(t, 0); case 'po100': return po(t, 1); case 'po150': return po(t, 2); case 'pobr': return pays(t) / Math.max(1, blown(t)) + pays(t) / 1e6;
+    case 'focus': { const r = (t.focus || [0, 0])[state.intraday ? 1 : 0]; return r > 0 ? -r : -1e9 + ratio(t); }
+    default: return t.net;
   }
 }
 const cmp = (a, b) => { const x = sortKey(a), y = sortKey(b); return x < y ? 1 : x > y ? -1 : 0; };
+// a group's tests with the Intraday box as it is (11-19: Best payout / Top 20 hold the Intraday focus picks when it is ticked, as in the app)
+const gIds = g => (state.intraday && g.idsIntraday) || g.ids;
 function showHome() {
   const byId = Object.fromEntries(INDEX.tests.map(t => [t.id, t]));
   const g = INDEX.groups.find(x => x.name === state.group) || INDEX.groups[0];
-  const items = g.ids.map(id => byId[id]).filter(Boolean);
+  const items = gIds(g).map(id => byId[id]).filter(Boolean);
   const icons = { 'Top 20': '★', 'Best payout': '$', 'Best for prop': '◆', 'Portfolios': '▦', 'Latest tests': '◷' };
   const left = INDEX.groups.map(x => {
-    const best = Math.max(...x.ids.map(id => byId[id]?.net ?? -1e18));
+    const best = Math.max(...gIds(x).map(id => byId[id]?.net ?? -1e18));
     return `<div class="g ${x.name === g.name ? 'on' : ''}" data-g="${esc(x.name)}"><span class="${x.name === 'Top 20' ? 'gold' : 'muted'}">${icons[x.name] || '•'}</span><div>${esc(x.name)}<small>best ${money0(best)}</small></div><span class="n">${x.ids.length}</span></div>`;
   }).join('');
-  const fams = {}; for (const t of items) { const k = g.name === 'Portfolios' ? t.label : (t.variant || t.family);   // version variants fold together (11-18) (fams[k] = fams[k] || []).push(t); } // each portfolio its own row
+  const fams = {}; for (const t of items) { const k = g.name === 'Portfolios' ? t.label : (t.variant || t.family); (fams[k] = fams[k] || []).push(t); }   // version variants fold together (11-18), each portfolio its own row
   let list = Object.entries(fams).map(([name, tests]) => ({ name, tests: tests.sort(cmp) })).sort((a, b) => cmp(a.tests[0], b.tests[0]));
-  const heads = ['Test', 'Saved', 'Trades', 'Net $', 'Win %', 'Max DD', 'Net ÷ DD', 'Years +', '50k PO', '100k PO', '150k PO', 'Total PO', 'PO / month', 'Payouts : Blown'];
+  const heads = ['Test', 'Saved', 'Trades', 'Net $', 'Win %', 'Max DD', 'Net ÷ DD', 'Years +', '50k PO', '100k PO', '150k PO', 'Total PO', 'PO / month', 'Payouts : Failed'];
   const poCells = t => [po(t, 0), po(t, 1), po(t, 2)].map(x => `<td class="${tone(x)}">${money0(x)}</td>`).join('') + `<td class="${tone(poTotal(t))}"><b>${money0(poTotal(t))}</b></td><td class="${tone(poMonth(t))}">${money0(poMonth(t))}</td><td class="${pays(t) > blown(t) ? 'pos' : ''}" title="50k ${cnt(t.pays, 0)} : ${cnt(t.blown, 0)}, 100k ${cnt(t.pays, 1)} : ${cnt(t.blown, 1)}, 150k ${cnt(t.pays, 2)} : ${cnt(t.blown, 2)}">${pays(t)} : ${blown(t)}</td>`;
   const row = (t, indent, label) => `<tr class="click" data-id="${t.id}"><td style="padding-left:${indent}px">${esc(label)}</td><td class="muted">${esc(t.saved)}</td><td>${n0(t.trades)}</td><td class="${tone(t.net)}"><b>${money0(t.net)}</b></td><td>${t.win.toFixed(1)}</td><td class="muted">${money0(-t.maxDd)}</td><td class="${ratio(t) >= 10 ? 'pos' : ''}">${ratio(t).toFixed(1)}</td><td class="${t.yearsUp === t.years ? 'pos' : ''}">${t.yearsUp} / ${t.years}</td>${poCells(t)}</tr>`;
   let body = '';
@@ -114,11 +118,11 @@ function showHome() {
     if (open) for (const x of f.tests) body += row(x, 34, x.label);
   }
   $app.innerHTML = `<div class="home"><div class="card groups"><div class="muted" style="font-size:11px;font-weight:700;margin:0 0 8px 4px">GROUPS</div>${left}</div>
-    <div class="card"><div class="row" style="align-items:center"><div class="grow"><h1>${esc(g.name)}</h1><div class="sub">${esc(GROUP_NOTE[g.name] || '')} ${items.length} tests in ${list.length} strategies. Sizes differ between tests, so net ÷ drawdown compares them fairly. PO: net payouts of one Apex ${state.intraday ? 'Intraday' : 'EOD'} account chain through every year of the test (a new evaluation after a failure or the 6th payout), the most allowed at every payout, evaluation 90 % off, every trade first at $150 of risk in whole micros (a wider stop is skipped), then 5 x in the evaluation and 8 x funded within Apex's contract limits; Total = 50k + 100k + 150k, PO / month = Total ÷ months of the test; Payouts : Blown = payouts received against accounts lost to the loss limit (evaluations and funded, all three sizes; evaluations that only ran out of 30 days are not counted as blown).</div></div>
+    <div class="card"><div class="row" style="align-items:center"><div class="grow"><h1>${esc(g.name)}</h1><div class="sub">${esc(GROUP_NOTE[g.name] || '')} ${items.length} tests in ${list.length} strategies. Sizes differ between tests, so net ÷ drawdown compares them fairly. PO: net payouts of one Apex ${state.intraday ? 'Intraday' : 'EOD'} account chain through every year of the test (a new evaluation after a failure or the 6th payout), the most allowed at every payout, evaluation 90 % off, every trade first at $150 of risk in whole micros (a wider stop is skipped), then 5 x in the evaluation and 8 x funded within Apex's contract limits; Total = 50k + 100k + 150k, PO / month = Total ÷ months of the test; Payouts : Failed = payouts received against failed accounts, as the Prop account page's Failed accounts card: lost to the loss limit (evaluation or funded) plus evaluations that ran out of 30 days, all three sizes.</div></div>
     <label class="muted">Sort by <select id="sort">${SORTS.map(([k, v]) => `<option value="${k}" ${k === state.sort ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
     <label class="muted" style="margin-left:10px" title="Payout columns with Apex Intraday rules; off: Apex EOD"><input type="checkbox" id="intra" ${state.intraday ? 'checked' : ''}> Intraday</label></div>
     <div class="tbl" style="margin-top:14px"><table><thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div></div></div>`;
-  $app.querySelectorAll('.g').forEach(el => el.onclick = () => { state.group = el.dataset.g; state.open.clear(); state.sort = state.group === 'Latest tests' ? 'newest' : state.group === 'Best payout' ? 'payout' : 'ratio'; showHome(); });
+  $app.querySelectorAll('.g').forEach(el => el.onclick = () => { state.group = el.dataset.g; state.open.clear(); state.sort = state.group === 'Latest tests' ? 'newest' : state.group === 'Best payout' ? 'focus' : 'ratio'; showHome(); });
   $app.querySelector('#sort').onchange = e => { state.sort = e.target.value; showHome(); };
   $app.querySelector('#intra').onchange = e => { state.intraday = e.target.checked; showHome(); };
   $app.querySelectorAll('tr.fam').forEach(el => el.onclick = () => { const f = el.dataset.fam; state.open.has(f) ? state.open.delete(f) : state.open.add(f); showHome(); });
